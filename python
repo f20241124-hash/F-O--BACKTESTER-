@@ -1,0 +1,18 @@
+Loading and parsing data from data/nifty_options_mock.csv...
+
+--- Data Sample Successfully Parsed ---
+        Date     Expiry  Strike OptionType  ClosePrice
+0 2022-01-03 2022-01-06   18800         CE      305.30
+1 2022-01-03 2022-01-06   18800         PE      148.94
+2 2022-01-03 2022-01-06   18850         CE       59.89
+3 2022-01-03 2022-01-06   18850         PE      239.74
+4 2022-01-03 2022-01-06   18900         CE      207.30
+
+Data column types after parsing:
+Date            datetime64[us]
+Expiry          datetime64[us]
+Strike                   int64
+OptionType                 str
+ClosePrice             float64
+OpenInterest             int64
+dtype: object
