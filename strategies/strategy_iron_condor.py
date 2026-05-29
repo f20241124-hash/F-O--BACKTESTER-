@@ -1,74 +1,198 @@
-from __future__ import annotations
-
 import pandas as pd
+import numpy as np
+import os
+import sys
 
-from strategies.common import (
-    StrategyContext,
-    base_trade,
-    get_option_close,
-    get_underlying_for_date,
-    nearest_available_strike,
-    weekly_expiries,
-)
+# Add the parent directory to the path so we can import data_loader
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from data_loader import load_options_data, get_atm_strike
 
 
-def _monday_entries(symbol_df: pd.DataFrame) -> pd.Series:
-    dates = symbol_df["Date"].drop_duplicates().sort_values()
-    return dates[dates.dt.weekday == 0]
+def get_banknifty_lot_size(trade_date):
+    """
+    BankNifty lot size rules:
+    - Prior to July 2023: 25
+    - July 2023 onwards: 15
+    """
+    if trade_date >= pd.to_datetime('2023-07-01'):
+        return 15
+    return 25
 
 
-def simulate_iron_condor(
-    options_df: pd.DataFrame,
-    symbol: str = "NIFTY",
-    short_offset: int = 100,
-    hedge_offset: int = 200,
-) -> pd.DataFrame:
-    ctx = StrategyContext(options_df=options_df, symbol=symbol)
-    symbol_df = ctx.symbol_df
-    all_expiries = weekly_expiries(symbol_df)
-    trades: list[dict] = []
+def run_iron_condor_backtest(data_path):
 
-    for entry_date in _monday_entries(symbol_df):
-        expiry_candidates = all_expiries[(all_expiries >= entry_date) & (all_expiries <= entry_date + pd.Timedelta(days=7))]
-        if expiry_candidates.empty:
+    print("Initializing BankNifty Weekly Iron Condor Backtest...")
+
+    df = load_options_data(data_path)
+
+    if df is None or df.empty:
+        print("Data failed to load. Halting backtest.")
+        return
+
+    # Create week identifier
+    df['YearWeek'] = (
+        df['Date'].dt.year.astype(str)
+        + "-"
+        + df['Date'].dt.isocalendar().week.astype(str)
+    )
+
+    weeks = df['YearWeek'].unique()
+
+    results = []
+
+    print(f"Running strategy across {len(weeks)} weekly cycles...")
+
+    for week in weeks:
+
+        week_data = df[df['YearWeek'] == week]
+
+        monday_data = week_data[
+            week_data['Date'].dt.weekday == 0
+        ]
+
+        thursday_data = week_data[
+            week_data['Date'].dt.weekday == 3
+        ]
+
+        if monday_data.empty or thursday_data.empty:
             continue
-        expiry = expiry_candidates.min()
 
-        entry_spot = get_underlying_for_date(symbol_df, entry_date)
-        exit_spot = get_underlying_for_date(symbol_df, expiry)
-        if entry_spot is None or exit_spot is None:
+        entry_date = monday_data['Date'].min()
+        exit_date = thursday_data['Date'].max()
+
+        entry_day_data = week_data[
+            week_data['Date'] == entry_date
+        ]
+
+        exit_day_data = week_data[
+            week_data['Date'] == exit_date
+        ]
+
+        if entry_day_data.empty or exit_day_data.empty:
             continue
 
-        short_call = nearest_available_strike(symbol_df, entry_date, expiry, entry_spot + short_offset, "CE")
-        long_call = nearest_available_strike(symbol_df, entry_date, expiry, entry_spot + hedge_offset, "CE")
-        short_put = nearest_available_strike(symbol_df, entry_date, expiry, entry_spot - short_offset, "PE")
-        long_put = nearest_available_strike(symbol_df, entry_date, expiry, entry_spot - hedge_offset, "PE")
-        if any(x is None for x in [short_call, long_call, short_put, long_put]):
+        # Approximate spot price
+        entry_spot = entry_day_data['Strike'].median()
+
+        atm_strike = get_atm_strike(entry_spot)
+
+        # Iron Condor strikes
+        sell_ce_strike = atm_strike + 100
+        buy_ce_strike = atm_strike + 200
+
+        sell_pe_strike = atm_strike - 100
+        buy_pe_strike = atm_strike - 200
+
+        try:
+
+            sell_ce_entry = entry_day_data[
+                (entry_day_data['Strike'] == sell_ce_strike) &
+                (entry_day_data['OptionType'] == 'CE')
+            ]['ClosePrice'].values[0]
+
+            buy_ce_entry = entry_day_data[
+                (entry_day_data['Strike'] == buy_ce_strike) &
+                (entry_day_data['OptionType'] == 'CE')
+            ]['ClosePrice'].values[0]
+
+            sell_pe_entry = entry_day_data[
+                (entry_day_data['Strike'] == sell_pe_strike) &
+                (entry_day_data['OptionType'] == 'PE')
+            ]['ClosePrice'].values[0]
+
+            buy_pe_entry = entry_day_data[
+                (entry_day_data['Strike'] == buy_pe_strike) &
+                (entry_day_data['OptionType'] == 'PE')
+            ]['ClosePrice'].values[0]
+
+            sell_ce_exit = exit_day_data[
+                (exit_day_data['Strike'] == sell_ce_strike) &
+                (exit_day_data['OptionType'] == 'CE')
+            ]['ClosePrice'].values[0]
+
+            buy_ce_exit = exit_day_data[
+                (exit_day_data['Strike'] == buy_ce_strike) &
+                (exit_day_data['OptionType'] == 'CE')
+            ]['ClosePrice'].values[0]
+
+            sell_pe_exit = exit_day_data[
+                (exit_day_data['Strike'] == sell_pe_strike) &
+                (exit_day_data['OptionType'] == 'PE')
+            ]['ClosePrice'].values[0]
+
+            buy_pe_exit = exit_day_data[
+                (exit_day_data['Strike'] == buy_pe_strike) &
+                (exit_day_data['OptionType'] == 'PE')
+            ]['ClosePrice'].values[0]
+
+        except IndexError:
             continue
 
-        sc = get_option_close(symbol_df, entry_date, expiry, short_call, "CE")
-        lc = get_option_close(symbol_df, entry_date, expiry, long_call, "CE")
-        sp = get_option_close(symbol_df, entry_date, expiry, short_put, "PE")
-        lp = get_option_close(symbol_df, entry_date, expiry, long_put, "PE")
-        if any(x is None for x in [sc, lc, sp, lp]):
-            continue
-
-        net_credit = sc + sp - lc - lp
-        expiry_payoff = (
-            -max(exit_spot - short_call, 0.0)
-            - max(short_put - exit_spot, 0.0)
-            + max(exit_spot - long_call, 0.0)
-            + max(long_put - exit_spot, 0.0)
+        # Net premium received
+        total_credit = (
+            sell_ce_entry
+            + sell_pe_entry
+            - buy_ce_entry
+            - buy_pe_entry
         )
-        pnl_points = net_credit + expiry_payoff
 
-        trade = base_trade(symbol, "IronCondor", entry_date, expiry)
-        trade["Legs"] = f"-CE@{short_call:.0f},+CE@{long_call:.0f},-PE@{short_put:.0f},+PE@{long_put:.0f}"
-        trade["EntryNifty"] = entry_spot
-        trade["ExitNifty"] = exit_spot
-        trade["NetPremium"] = net_credit
-        trade["PnlPoints"] = pnl_points
-        trade["PnL"] = pnl_points * trade["LotSize"]
-        trades.append(trade)
+        # Cost to close
+        total_debit = (
+            sell_ce_exit
+            + sell_pe_exit
+            - buy_ce_exit
+            - buy_pe_exit
+        )
 
-    return pd.DataFrame(trades)
+        # Net points earned
+        net_points = total_credit - total_debit
+
+        lot_size = get_banknifty_lot_size(entry_date)
+
+        trade_pnl = net_points * lot_size
+
+        results.append({
+            'Entry_Date': entry_date.strftime('%Y-%m-%d'),
+            'Exit_Date': exit_date.strftime('%Y-%m-%d'),
+            'Entry_Spot': round(entry_spot, 2),
+            'ATM_Strike': atm_strike,
+            'Sell_CE': sell_ce_strike,
+            'Buy_CE': buy_ce_strike,
+            'Sell_PE': sell_pe_strike,
+            'Buy_PE': buy_pe_strike,
+            'Premium_Received': round(total_credit, 2),
+            'Premium_Paid_To_Close': round(total_debit, 2),
+            'Net_Points': round(net_points, 2),
+            'Lot_Size': lot_size,
+            'Expiry_PnL': round(trade_pnl, 2)
+        })
+
+    results_df = pd.DataFrame(results)
+
+    output_file = os.path.join(
+        os.path.dirname(__file__),
+        '..',
+        'results',
+        'iron_condor_results.csv'
+    )
+
+    results_df.to_csv(output_file, index=False)
+
+    print("\n--- Strategy Execution Complete ---")
+    print(f"Total Trades Simulated: {len(results_df)}")
+    print(f"Results successfully saved to: {output_file}")
+
+    print("\nFirst 5 Trades Preview:")
+    print(results_df.head())
+
+
+if __name__ == "__main__":
+
+    master_data_path = os.path.join(
+        os.path.dirname(__file__),
+        '..',
+        'data',
+        'banknifty_options_master.csv'
+    )
+
+    run_iron_condor_backtest(master_data_path)

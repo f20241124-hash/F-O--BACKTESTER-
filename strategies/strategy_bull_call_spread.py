@@ -1,55 +1,161 @@
-from __future__ import annotations
-
 import pandas as pd
+import numpy as np
+import os
+import sys
 
-from strategies.common import (
-    StrategyContext,
-    base_trade,
-    get_option_close,
-    get_underlying_for_date,
-    monthly_expiries,
-    nearest_available_strike,
-    trade_entry_date,
-)
+# Add the parent directory to the path so we can import data_loader
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from data_loader import load_options_data, get_atm_strike
 
 
-def simulate_bull_call_spread(options_df: pd.DataFrame, symbol: str = "NIFTY", short_offset: int = 100) -> pd.DataFrame:
-    ctx = StrategyContext(options_df=options_df, symbol=symbol)
-    symbol_df = ctx.symbol_df
-    trades: list[dict] = []
+def get_banknifty_lot_size(trade_date):
+    """
+    BankNifty lot size rules:
+    - Prior to July 2023: 25
+    - July 2023 onwards: 15
+    """
+    if trade_date >= pd.to_datetime('2023-07-01'):
+        return 15
+    return 25
 
-    for expiry in monthly_expiries(symbol_df):
-        entry_date = trade_entry_date(symbol_df, expiry)
-        if entry_date is None:
+
+def run_bull_call_spread_backtest(data_path):
+
+    print("Initializing BankNifty Bull Call Spread Strategy Backtest...")
+
+    df = load_options_data(data_path)
+
+    if df is None or df.empty:
+        print("Data failed to load. Halting backtest.")
+        return
+
+    df['YearMonth'] = df['Date'].dt.to_period('M')
+    months = df['YearMonth'].unique()
+
+    results = []
+
+    print(f"Running strategy across {len(months)} monthly cycles...")
+
+    for month in months:
+
+        month_data = df[df['YearMonth'] == month]
+
+        entry_date = month_data['Date'].min()
+        actual_exit_date = month_data['Date'].max()
+
+        entry_day_data = month_data[
+            month_data['Date'] == entry_date
+        ]
+
+        expiry_day_data = month_data[
+            month_data['Date'] == actual_exit_date
+        ]
+
+        if entry_day_data.empty or expiry_day_data.empty:
             continue
-        entry_spot = get_underlying_for_date(symbol_df, entry_date)
-        exit_spot = get_underlying_for_date(symbol_df, expiry)
-        if entry_spot is None or exit_spot is None:
+
+        # Approximate spot price
+        entry_spot = entry_day_data['Strike'].median()
+
+        atm_strike = get_atm_strike(entry_spot)
+
+        # Bull Call Spread
+        buy_call_strike = atm_strike
+        sell_call_strike = atm_strike + 100
+
+        buy_call = entry_day_data[
+            (entry_day_data['Strike'] == buy_call_strike) &
+            (entry_day_data['OptionType'] == 'CE')
+        ]
+
+        sell_call = entry_day_data[
+            (entry_day_data['Strike'] == sell_call_strike) &
+            (entry_day_data['OptionType'] == 'CE')
+        ]
+
+        if buy_call.empty or sell_call.empty:
             continue
 
-        long_strike = nearest_available_strike(symbol_df, entry_date, expiry, entry_spot, "CE")
-        if long_strike is None:
-            continue
-        short_strike = nearest_available_strike(symbol_df, entry_date, expiry, long_strike + short_offset, "CE")
-        if short_strike is None:
-            continue
+        buy_call_premium = buy_call['ClosePrice'].values[0]
+        sell_call_premium = sell_call['ClosePrice'].values[0]
 
-        long_premium = get_option_close(symbol_df, entry_date, expiry, long_strike, "CE")
-        short_premium = get_option_close(symbol_df, entry_date, expiry, short_strike, "CE")
-        if long_premium is None or short_premium is None:
-            continue
+        # Net premium paid
+        net_premium_paid = (
+            buy_call_premium -
+            sell_call_premium
+        )
 
-        entry_cost = long_premium - short_premium
-        expiry_payoff = max(exit_spot - long_strike, 0.0) - max(exit_spot - short_strike, 0.0)
-        pnl_points = expiry_payoff - entry_cost
+        exit_spot = expiry_day_data['Strike'].median()
 
-        trade = base_trade(symbol, "BullCallSpread", entry_date, expiry)
-        trade["Legs"] = f"+CE@{long_strike:.0f},-CE@{short_strike:.0f}"
-        trade["EntryNifty"] = entry_spot
-        trade["ExitNifty"] = exit_spot
-        trade["NetPremium"] = -entry_cost
-        trade["PnlPoints"] = pnl_points
-        trade["PnL"] = pnl_points * trade["LotSize"]
-        trades.append(trade)
+        # Payoff at expiry
 
-    return pd.DataFrame(trades)
+        long_call_payoff = max(
+            0,
+            exit_spot - buy_call_strike
+        )
+
+        short_call_payoff = -max(
+            0,
+            exit_spot - sell_call_strike
+        )
+
+        total_payoff = (
+            long_call_payoff +
+            short_call_payoff
+        )
+
+        lot_size = get_banknifty_lot_size(entry_date)
+
+        net_points = (
+            total_payoff -
+            net_premium_paid
+        )
+
+        trade_pnl = (
+            net_points *
+            lot_size
+        )
+
+        results.append({
+            'Date': entry_date.strftime('%Y-%m-%d'),
+            'Expiry': actual_exit_date.strftime('%Y-%m-%d'),
+            'Entry_Spot': round(entry_spot, 2),
+            'ATM_Strike': atm_strike,
+            'Buy_Call_Strike': buy_call_strike,
+            'Sell_Call_Strike': sell_call_strike,
+            'Net_Premium_Paid': round(net_premium_paid, 2),
+            'Expiry_Spot': round(exit_spot, 2),
+            'Spread_Payoff': round(total_payoff, 2),
+            'Lot_Size': lot_size,
+            'Expiry_PnL': round(trade_pnl, 2)
+        })
+
+    results_df = pd.DataFrame(results)
+
+    output_file = os.path.join(
+        os.path.dirname(__file__),
+        '..',
+        'results',
+        'bull_call_spread_results.csv'
+    )
+
+    results_df.to_csv(output_file, index=False)
+
+    print("\n--- Strategy Execution Complete ---")
+    print(f"Total Trades Simulated: {len(results_df)}")
+    print(f"Results successfully saved to: {output_file}")
+
+    print("\nFirst 5 Trades Preview:")
+    print(results_df.head())
+
+
+if __name__ == "__main__":
+
+    master_data_path = os.path.join(
+        os.path.dirname(__file__),
+        '..',
+        'data',
+        'banknifty_options_master.csv'
+    )
+
+    run_bull_call_spread_backtest(master_data_path)
