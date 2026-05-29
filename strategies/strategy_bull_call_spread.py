@@ -120,12 +120,12 @@ def run_bull_call_spread_backtest(data_path):
             'Date': entry_date.strftime('%Y-%m-%d'),
             'Expiry': actual_exit_date.strftime('%Y-%m-%d'),
             'Entry_Spot': round(entry_spot, 2),
-            'ATM_Strike': atm_strike,
-            'Buy_Call_Strike': buy_call_strike,
-            'Sell_Call_Strike': sell_call_strike,
+            'Strike': atm_strike,
+            #'Buy_Call_Strike': buy_call_strike,
+            #'Sell_Call_Strike': sell_call_strike,
             'Net_Premium_Paid': round(net_premium_paid, 2),
-            'Expiry_Spot': round(exit_spot, 2),
-            'Spread_Payoff': round(total_payoff, 2),
+            #'Expiry_Spot': round(exit_spot, 2),
+            #'Spread_Payoff': round(total_payoff, 2),
             'Lot_Size': lot_size,
             'Expiry_PnL': round(trade_pnl, 2)
         })

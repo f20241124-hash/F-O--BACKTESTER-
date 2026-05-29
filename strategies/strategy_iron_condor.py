@@ -156,13 +156,13 @@ def run_iron_condor_backtest(data_path):
             'Exit_Date': exit_date.strftime('%Y-%m-%d'),
             'Entry_Spot': round(entry_spot, 2),
             'ATM_Strike': atm_strike,
-            'Sell_CE': sell_ce_strike,
-            'Buy_CE': buy_ce_strike,
-            'Sell_PE': sell_pe_strike,
-            'Buy_PE': buy_pe_strike,
+            #'Sell_CE': sell_ce_strike,
+            #'Buy_CE': buy_ce_strike,
+            #'Sell_PE': sell_pe_strike,
+            #'Buy_PE': buy_pe_strike,
             'Premium_Received': round(total_credit, 2),
             'Premium_Paid_To_Close': round(total_debit, 2),
-            'Net_Points': round(net_points, 2),
+            #'Net_Points': round(net_points, 2),
             'Lot_Size': lot_size,
             'Expiry_PnL': round(trade_pnl, 2)
         })
