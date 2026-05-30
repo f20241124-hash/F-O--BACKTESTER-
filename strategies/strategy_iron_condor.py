@@ -152,8 +152,8 @@ def run_iron_condor_backtest(data_path):
         trade_pnl = net_points * lot_size
 
         results.append({
-            'Entry_Date': entry_date.strftime('%Y-%m-%d'),
-            'Exit_Date': exit_date.strftime('%Y-%m-%d'),
+            'Date': entry_date.strftime('%Y-%m-%d'),
+            'Expiry': exit_date.strftime('%Y-%m-%d'),
             'Entry_Spot': round(entry_spot, 2),
             'ATM_Strike': atm_strike,
             #'Sell_CE': sell_ce_strike,
