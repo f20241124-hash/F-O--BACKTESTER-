@@ -103,10 +103,48 @@ def avg_monthly_return(trades_df):
 
     return monthly_returns.mean()
 
+def regime_analysis(trades_df):
+    """
+    Calculate performance separately for each market regime.
+
+    Returns:
+        DataFrame with:
+        - Number of trades
+        - Total PnL
+        - Average PnL
+        - Win Rate
+    """
+
+    if 'Regime' not in trades_df.columns:
+        raise ValueError(
+            "Regime column not found. "
+            "Run add_regime.py first."
+        )
+
+    analysis = (
+        trades_df
+        .groupby('Regime')
+        .agg(
+            Trades=('Expiry_PnL', 'count'),
+            Total_PnL=('Expiry_PnL', 'sum'),
+            Avg_PnL=('Expiry_PnL', 'mean')
+        )
+    )
+
+    win_rates = (
+        trades_df
+        .groupby('Regime')['Expiry_PnL']
+        .apply(lambda x: (x > 0).mean() * 100)
+    )
+
+    analysis['Win_Rate'] = win_rates
+
+    return analysis.round(2)
+
 if __name__ == "__main__":
-    
+
     results = pd.read_csv(
-        "results/iron_condor_results.csv"
+        "results/covered_call_results_regime.csv"
     )
 
     print("Total PnL:", total_pnl(results))
@@ -114,3 +152,6 @@ if __name__ == "__main__":
     print("Max Drawdown:", max_drawdown(results))
     print("Sharpe Ratio:", sharpe_ratio(results))
     print("Average Monthly Return:", avg_monthly_return(results))
+
+    print("\n=== Regime Analysis ===")
+    print(regime_analysis(results))
