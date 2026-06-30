@@ -176,5 +176,5 @@ if __name__ == "__main__":
     )
 
     create_charts(
-        "results/bull_call_spread_results.csv"
+        "results/straddle_results.csv"
     )
