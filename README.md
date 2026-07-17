@@ -12,4 +12,6 @@ Under server roles, do checkbox public, sysadmin.
 Specify which database access is to be given to this login.
 Then apply the settings.
 
+Also, open SQL Server Configuration Manger. Under SQL Server Services start the SQL Server and SQL Server Browser. Aslo, under SQL Server Network Configuration, enable TCP/IP protocol.
+
 to run the website, write npm start in the terminal.
